@@ -1,0 +1,96 @@
+import math
+
+def compute_hr(ir_buffer, acq_freq):
+    """
+    Compute heart rate (HR) in bpm from a filtered IR PPG buffer.
+
+    ir_buffer : list of floats/ints
+        Recent window of filtered IR samples (e.g. length ~50–200).
+    acq_freq : float
+        Real acquisition frequency (Hz), e.g. 95.0, 100.0 etc.
+
+    Returns
+    -------
+    hr_bpm : float or None
+        Estimated heart rate in bpm, or None if not enough info.
+    """
+
+    # ---- 0) Basic safety checks ----
+    if acq_freq <= 0:
+        return None
+    if ir_buffer is None or len(ir_buffer) < 10:
+        # Too few samples to say anything meaningful
+        return None
+
+    # ---- 1) DC removal (center the signal around zero) ----
+    n = len(ir_buffer)
+    mean_val = sum(ir_buffer) / n
+    centered = [x - mean_val for x in ir_buffer]
+
+    # ---- 2) Check signal amplitude (avoid noise-only windows) ----
+    max_abs = max(abs(x) for x in centered)
+    if max_abs < 1e-3:
+        # Almost flat signal → no pulsatile information
+        return None
+
+    # ---- 3) Dynamic peak threshold ----
+    # We only accept peaks that are a certain fraction of max amplitude
+    threshold = 0.5 * max_abs  # you can tweak this (0.3–0.7)
+
+    # ---- 4) Peak detection with refractory period ----
+    # Max physiological HR ~ 200 bpm → min RR ~ 0.3 s
+    min_rr_seconds = 0.3
+    min_sample_between_peaks = int(acq_freq * min_rr_seconds)
+    if min_sample_between_peaks < 1:
+        min_sample_between_peaks = 1
+
+    peaks = []
+    last_peak_idx = -min_sample_between_peaks  # allow first peak anywhere
+
+    # Simple local-maximum-based peak detection
+    # We skip first and last sample to safely look at i-1 and i+1
+    for i in range(1, n - 1):
+        sample = centered[i]
+
+        # Above threshold?
+        if sample < threshold:
+            continue
+
+        # Local maximum?
+        if not (sample >= centered[i - 1] and sample >= centered[i + 1]):
+            continue
+
+        # Respect refractory period?
+        if (i - last_peak_idx) < min_sample_between_peaks:
+            continue
+
+        # Accept this as a peak
+        peaks.append(i)
+        last_peak_idx = i
+
+    # ---- 5) Need at least 2 peaks to compute RR intervals ----
+    if len(peaks) < 2:
+        return None
+
+    # ---- 6) Compute RR intervals (in seconds) ----
+    rr_intervals = []
+    for k in range(1, len(peaks)):
+        # index difference / sampling rate = time difference in seconds
+        dt_seconds = (peaks[k] - peaks[k - 1]) / acq_freq
+        rr_intervals.append(dt_seconds)
+
+    # Optional: reject absurdly small/large intervals (noise / motion artifacts)
+    cleaned_rr = []
+    for rr in rr_intervals:
+        # Accept only intervals in a plausible range, e.g. 0.3–2.0 s
+        if 0.3 <= rr <= 2.0:
+            cleaned_rr.append(rr)
+
+    if len(cleaned_rr) == 0:
+        return None
+
+    # ---- 7) Average RR → HR in bpm ----
+    avg_rr = sum(cleaned_rr) / len(cleaned_rr)
+    hr_bpm = 60.0 / avg_rr
+
+    return hr_bpm, peaks
