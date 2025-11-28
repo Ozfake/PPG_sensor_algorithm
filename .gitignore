@@ -1,0 +1,12 @@
+# VS Code local ayarları
+.vscode/
+
+# MicroPico cache
+.micropico/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Log files
+*.log
