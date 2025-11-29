@@ -1,43 +1,11 @@
 # system
-from machine import SoftI2C, Pin
+from machine import I2C, Pin
 from utime import ticks_diff, ticks_us 
 #wifi connection and data
 import json
 import network
 import time
-
-SSID = "wifi adı"
-PASSWORD = "şifre"
-
-def connect_wifi():
-    wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
-
-    if not wlan.isconnected():
-        wlan.connect(SSID, PASSWORD)
-        while not wlan.isconnected():
-            time.sleep(0.5)
-
-    return wlan
-
-wlan = connect_wifi()
-
-#TCP server and client connection
 import socket
-
-def start_server():
-    addr = socket.getaddrinfo("0.0.0.0", 8266)[0][-1]
-    s = socket.socket()
-    s.bind(addr) # addr: server
-                 # remote_addr: client 
-    s.listen(1)
-
-    client, remote_addr = s.accept()
-
-    return client
-
-client_socket = start_server()
-
 # external
 from max30205 import MAX30205
 from max30102 import MAX30102, MAX30105_PULSE_AMP_MEDIUM
@@ -45,6 +13,47 @@ from filter import BandpassFilter
 #project_modules
 from hrcalculator import compute_hr
 from spo2calculator import compute_spo2
+
+
+SSID = "SUPERONLINE_Wi-Fi_3252"
+PASSWORD = "3HcTsZPUXYx5"
+
+def connect_wifi():
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+
+    if not wlan.isconnected():
+        print("Connecting to Wi-Fi...")
+        wlan.connect(SSID, PASSWORD)
+        while not wlan.isconnected():
+            time.sleep(0.5)
+    
+    print("Wi-Fi Connected.")
+
+    return wlan
+
+wlan = connect_wifi()
+print("Pico connected, ifconfig =", wlan.ifconfig())
+
+
+#TCP server and client connection
+def start_server():
+    print("Starting TCP server on port 8266...")
+    addr = socket.getaddrinfo("0.0.0.0", 8266)[0][-1]
+    s = socket.socket()
+    s.bind(addr) # addr: server
+                 # remote_addr: client 
+    s.listen(1)
+    
+    print("Waiting for client...")
+    client, remote_addr = s.accept()
+    print("Client connected from:", remote_addr)
+
+    return client
+
+client_socket = start_server()
+print("TCP client socket ready, now initializing sensors...")
+
 
 bp_filter_ir = BandpassFilter(fs=100, fc_hp=0.5, fc_lp=8.0)
 bp_filter_red = BandpassFilter(fs=100, fc_hp=0.5, fc_lp=8.0) 
@@ -62,15 +71,12 @@ ir_buffer = []
 
 my_SDA_pin = 26
 my_SCL_pin = 27
-my_i2c_freq = 400000
+my_i2c_freq = 100000
 
-i2c = SoftI2C(sda=Pin(my_SDA_pin),
-            scl=Pin(my_SCL_pin), 
-            freq=my_i2c_freq)
+i2c = I2C(1, sda=Pin(my_SDA_pin), scl=Pin(my_SCL_pin), freq=my_i2c_freq)
+print(i2c.scan())
 
 sensor = MAX30102(i2c=i2c)
-temp_sensor = MAX30205(i2c=i2c)
-
 # setup the sensor
 sensor.setup_sensor()
 # Set the number of samples to be averaged by the chip 
@@ -85,9 +91,11 @@ sensor.set_pulse_width(215) # set LED pulse width to 215us
 sensor.set_led_mode(2) # set to SpO2 mode (Red + IR)
 # set the led brightness
 sensor.set_pulse_amplitude_red(MAX30105_PULSE_AMP_MEDIUM) # set Red LED brightness to medium
-sensor.set_pulse_amplitude_ir(MAX30105_PULSE_AMP_MEDIUM) # set IR LED brightness to medium
+sensor.set_pulse_amplitude_it(MAX30105_PULSE_AMP_MEDIUM) # set IR LED brightness to medium
 # set the led brightness of all the active leds
 sensor.set_active_leds_amplitude(MAX30105_PULSE_AMP_MEDIUM) # set all active LED brightness to medium
+
+temp_sensor = MAX30205(i2c=i2c)
 
 while True:
     sensor.check() # check for new data
@@ -114,7 +122,15 @@ while True:
 
         if len(red_buffer) >= BUFFER_SIZE and len(ir_buffer) >= BUFFER_SIZE:
 
-            hr_rate, peaks_index = compute_hr(ir_buffer, f_HZ)
+            hr_result = compute_hr(ir_buffer, f_HZ)
+
+            if hr_result is None:
+                print("HR could not be computed, skipping this window.")
+                red_buffer = []
+                ir_buffer = []
+                continue
+
+            hr_rate, peaks_index = hr_result
 
             spo2 = compute_spo2(ir_buffer, red_buffer, min_samples=40)
 
