@@ -64,14 +64,15 @@ f_HZ = 0 # frequency of data acquisition
 t_start = ticks_us() # starting time for acquisition 
 samples_n = 0 # number of samples received
 
-BUFFER_SIZE = 50 
+BUFFER_SIZE = 200 
 red_buffer = []
 ir_buffer = []
-
+raw_red_buffer = []
+raw_ir_buffer = []
 
 my_SDA_pin = 26
 my_SCL_pin = 27
-my_i2c_freq = 100000
+my_i2c_freq = 400000
 
 i2c = I2C(1, sda=Pin(my_SDA_pin), scl=Pin(my_SCL_pin), freq=my_i2c_freq)
 print(i2c.scan())
@@ -97,16 +98,22 @@ sensor.set_active_leds_amplitude(MAX30105_PULSE_AMP_MEDIUM) # set all active LED
 
 temp_sensor = MAX30205(i2c=i2c)
 
+last_temp = None
+last_hr = None
+last_spo2 = None
+
 while True:
     sensor.check() # check for new data
     
-    if sensor.available():
+    while sensor.available():
         red_sample = sensor.pop_red_from_storage()
+        raw_red_buffer.append(red_sample)
         red_sample_filtered = bp_filter_red.step(red_sample)
         red_buffer.append(red_sample_filtered)
 
 
         ir_sample = sensor.pop_ir_from_storage()
+        raw_ir_buffer.append(ir_sample)
         ir_sample_filtered = bp_filter_ir.step(ir_sample)
         ir_buffer.append(ir_sample_filtered)
         
@@ -125,16 +132,29 @@ while True:
             hr_result = compute_hr(ir_buffer, f_HZ)
 
             if hr_result is None:
-                print("HR could not be computed, skipping this window.")
-                red_buffer = []
-                ir_buffer = []
-                continue
+                print("HR could not be computed, using last HR value.")
+                hr_rate = last_hr
+                peaks_index = []
+            
+            else:
+                hr_rate, peaks_index = hr_result
+                last_hr = hr_rate
 
-            hr_rate, peaks_index = hr_result
+            
+            spo2 = compute_spo2(ir_buffer, red_buffer, raw_ir_buffer, raw_red_buffer, min_samples=40)
+            if spo2 is None:
+                spo2 = last_spo2
+            else:
+                last_spo2 = spo2
 
-            spo2 = compute_spo2(ir_buffer, red_buffer, min_samples=40)
-
-            temperature_c = temp_sensor.read_temperature_c()
+            # --- Sıcaklık oku (hata olursa pencereyi atla) ---
+            try:
+                temperature_c = temp_sensor.read_temperature_c()
+                last_temp = temperature_c
+            except OSError as e:
+                print("Temp sensor read error:", e)
+                temperature_c = last_temp
+                
 
             data_packet = {
                 "red": red_buffer,
@@ -154,9 +174,10 @@ while True:
                 client_socket.send(payload.encode("utf-8"))
             except OSError:
                 client_socket = start_server()
-                continue 
+                 
 
             red_buffer = []
             ir_buffer = []
+            raw_ir_buffer = []
+            raw_red_buffer = []
         
-    time.sleep_ms(1)

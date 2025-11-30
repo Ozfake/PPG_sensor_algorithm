@@ -21,7 +21,7 @@ def _rms(values):
     return (s / n) ** 0.5
 
 
-def compute_spo2(ir_buffer, red_buffer, min_samples=40):
+def compute_spo2(ir_buffer, red_buffer, raw_ir_buffer, raw_red_buffer, min_samples=40):
     """
     Compute SpO2 from IR and RED buffers using a simple ratio-of-ratios method.
 
@@ -41,36 +41,38 @@ def compute_spo2(ir_buffer, red_buffer, min_samples=40):
     """
 
     # 1) Temel kontroller
-    if ir_buffer is None or red_buffer is None:
+    if raw_ir_buffer is None or raw_red_buffer is None:
         return None
 
     n_ir = len(ir_buffer)
     n_red = len(red_buffer)
+    n_raw_ir = len(raw_ir_buffer)
+    n_raw_red = len(raw_red_buffer)
 
-    if n_ir < min_samples or n_red < min_samples:
-        # Yeterli örnek yok -> hesaplama yok
+    
+    # Güvenlik: iki buffer uzunluğu farklıysa küçük olanı baz al
+    n = min(n_raw_ir, n_raw_red, n_ir, n_red)
+
+    if n < min_samples:
         return None
 
-    # Güvenlik: iki buffer uzunluğu farklıysa küçük olanı baz al
-    n = min(n_ir, n_red)
-    ir = ir_buffer[-n:] # son n örnek
+    raw_ir = raw_ir_buffer[-n:]
+    raw_red = raw_red_buffer[-n:]
+    ir = ir_buffer[-n:]
     red = red_buffer[-n:]
 
     # 2) DC bileşen (ortalama)
-    dc_ir = _mean(ir)
-    dc_red = _mean(red)
+    dc_ir = _mean(raw_ir)
+    dc_red = _mean(raw_red)
 
     if dc_ir == 0 or dc_red == 0:
         return None
 
     # 3) AC bileşen (ortalama etrafındaki dalgalanma)
-    ir_ac = [v - dc_ir for v in ir]
-    red_ac = [v - dc_red for v in red]
+    ac_ir = _rms(ir)
+    ac_red = _rms(red)
 
-    ac_ir = _rms(ir_ac)
-    ac_red = _rms(red_ac)
-
-    if ac_ir == 0 or ac_red == 0:
+    if dc_ir == 0 or dc_red == 0 or ac_ir == 0 or ac_red == 0:
         return None
 
     # 4) Ratio-of-ratios R = (AC_red/DC_red) / (AC_ir/DC_ir)
@@ -87,5 +89,15 @@ def compute_spo2(ir_buffer, red_buffer, min_samples=40):
         spo2 = 0.0
     elif spo2 > 100:
         spo2 = 100.0
+
+    # DEBUG
+    print("DEBUG:",
+      "dc_ir=", dc_ir,
+      "dc_red=", dc_red,
+      "ac_ir=", ac_ir,
+      "ac_red=", ac_red,
+      "R=", R,
+      "spo2=", spo2)
+
 
     return spo2

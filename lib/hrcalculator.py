@@ -35,11 +35,11 @@ def compute_hr(ir_buffer, acq_freq):
 
     # ---- 3) Dynamic peak threshold ----
     # We only accept peaks that are a certain fraction of max amplitude
-    threshold = 0.5 * max_abs  # you can tweak this (0.3–0.7)
+    threshold = 0.3 * max_abs  # you can tweak this (0.3–0.7)
 
     # ---- 4) Peak detection with refractory period ----
     # Max physiological HR ~ 200 bpm → min RR ~ 0.3 s
-    min_rr_seconds = 0.3
+    min_rr_seconds = 0.4
     min_sample_between_peaks = int(acq_freq * min_rr_seconds)
     if min_sample_between_peaks < 1:
         min_sample_between_peaks = 1
@@ -83,14 +83,23 @@ def compute_hr(ir_buffer, acq_freq):
     cleaned_rr = []
     for rr in rr_intervals:
         # Accept only intervals in a plausible range, e.g. 0.3–2.0 s
-        if 0.3 <= rr <= 2.0:
+        if 0.4 <= rr <= 2.0:
             cleaned_rr.append(rr)
 
     if len(cleaned_rr) == 0:
         return None
 
     # ---- 7) Average RR → HR in bpm ----
-    avg_rr = sum(cleaned_rr) / len(cleaned_rr)
-    hr_bpm = 60.0 / avg_rr
+    cleaned_rr.sort()
+    mid = len(cleaned_rr) // 2
+    if len(cleaned_rr) % 2 == 1:
+        median_rr = cleaned_rr[mid]
+    else:
+        median_rr = 0.5 * (cleaned_rr[mid-1] + cleaned_rr[mid])
+
+    hr_bpm = 60.0 / median_rr
+
+    if not (50.0 <= hr_bpm <= 130.0):
+        return None
 
     return hr_bpm, peaks
