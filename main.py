@@ -64,7 +64,7 @@ f_HZ = 0 # frequency of data acquisition
 t_start = ticks_us() # starting time for acquisition 
 samples_n = 0 # number of samples received
 
-BUFFER_SIZE = 200 
+BUFFER_SIZE = 50 
 red_buffer = []
 ir_buffer = []
 raw_red_buffer = []
@@ -102,6 +102,7 @@ last_temp = None
 last_hr = None
 last_spo2 = None
 
+
 while True:
     sensor.check() # check for new data
     
@@ -126,6 +127,20 @@ while True:
                 t_start = ticks_us()
             else:
                 samples_n = samples_n + 1
+
+        sample_packet = {
+            "type": "sample",
+            "red": red_sample_filtered,
+            "ir": ir_sample_filtered,
+        }
+
+        payload_sample = json.dumps(sample_packet) + "\n" # sending json file
+
+        try:
+            client_socket.send(payload_sample.encode("utf-8"))
+        except OSError:
+            client_socket = start_server()
+
 
         if len(red_buffer) >= BUFFER_SIZE and len(ir_buffer) >= BUFFER_SIZE:
 
@@ -156,9 +171,8 @@ while True:
                 temperature_c = last_temp
                 
 
-            data_packet = {
-                "red": red_buffer,
-                "ir": ir_buffer,
+            result_packet = {
+                "type": "result",
                 "acq_freq": f_HZ,
                 "hr": {
                     "value": hr_rate,
@@ -168,10 +182,10 @@ while True:
                 "body_temp": temperature_c 
             }
 
-            payload = json.dumps(data_packet) + "\n" # sending json file
+            payload_result = json.dumps(result_packet) + "\n" # sending json file
 
             try:
-                client_socket.send(payload.encode("utf-8"))
+                client_socket.send(payload_result.encode("utf-8"))
             except OSError:
                 client_socket = start_server()
                  
