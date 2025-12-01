@@ -16,7 +16,7 @@ class MAX30205:
 
         temp = raw / 256.0
 
-        # Eğer çok düşük çıktıysa → sensör extended formatta
+        # If the output is too low → the sensor is in extended format
         if temp < -10:
             temp += 64.0
 

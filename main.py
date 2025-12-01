@@ -1,4 +1,5 @@
 # system
+
 from machine import I2C, Pin
 from utime import ticks_diff, ticks_us 
 #wifi connection and data
@@ -7,14 +8,17 @@ import network
 import time
 import socket
 # external
-from max30205 import MAX30205
-from max30102 import MAX30102, MAX30105_PULSE_AMP_MEDIUM
-from filter import BandpassFilter
+from lib.max30205 import MAX30205
+from lib.max30102 import MAX30102, MAX30105_PULSE_AMP_MEDIUM
+from lib.filter import BandpassFilter
 #project_modules
-from hrcalculator import compute_hr
-from spo2calculator import compute_spo2
+from lib.hrcalculator import compute_hr
+from lib.spo2calculator import compute_spo2, _mean
 
 
+################
+
+#Wi-Fi connection setup
 SSID = "SUPERONLINE_Wi-Fi_3252"
 PASSWORD = "3HcTsZPUXYx5"
 
@@ -54,22 +58,26 @@ def start_server():
 client_socket = start_server()
 print("TCP client socket ready, now initializing sensors...")
 
+################
 
+#Filters
 bp_filter_ir = BandpassFilter(fs=100, fc_hp=0.5, fc_lp=8.0)
 bp_filter_red = BandpassFilter(fs=100, fc_hp=0.5, fc_lp=8.0) 
 
-compute_frequency = True # we may use it for control it by an input from user
-f_HZ = 0 # frequency of data acquisition
-
-t_start = ticks_us() # starting time for acquisition 
-samples_n = 0 # number of samples received
-
+#Buffers
 BUFFER_SIZE = 100 
 red_buffer = []
 ir_buffer = []
 raw_red_buffer = []
 raw_ir_buffer = []
 
+#Parameters for acquisition frequency
+compute_frequency = True # we may use it for control it by an input from user
+f_HZ = 0 # frequency of data acquisition
+t_start = ticks_us() # starting time for acquisition 
+samples_n = 0 # number of samples received
+
+#I2C setup
 my_SDA_pin = 26
 my_SCL_pin = 27
 my_i2c_freq = 100000
@@ -77,8 +85,11 @@ my_i2c_freq = 100000
 i2c = I2C(1, sda=Pin(my_SDA_pin), scl=Pin(my_SCL_pin), freq=my_i2c_freq)
 print(i2c.scan())
 
+################
+
+## SENSOR SETUP
+# setup the max30102
 sensor = MAX30102(i2c=i2c)
-# setup the sensor
 sensor.setup_sensor()
 # Set the number of samples to be averaged by the chip 
 sensor.set_fifo_average(2) # set FIFO average to 8 samples
@@ -96,11 +107,15 @@ sensor.set_pulse_amplitude_it(MAX30105_PULSE_AMP_MEDIUM) # set IR LED brightness
 # set the led brightness of all the active leds
 sensor.set_active_leds_amplitude(MAX30105_PULSE_AMP_MEDIUM) # set all active LED brightness to medium
 
+#setup the max30205
 temp_sensor = MAX30205(i2c=i2c)
 
-last_temp = None
-last_hr = None
-last_spo2 = None
+################
+#Variables for conditions
+last_temp = None #Holds last temperature
+last_hr = None #Holds last heart rate
+hr_count = 0 #Counts the number of times the peaks is not found 
+last_spo2 = None #Holds last spo2
 
 
 while True:
@@ -128,12 +143,14 @@ while True:
             else:
                 samples_n = samples_n + 1
 
+        #First data packet for sending each frame of data
         sample_packet = {
             "type": "sample",
             "red": red_sample_filtered,
             "ir": ir_sample_filtered,
         }
 
+        #Data conversion
         payload_sample = json.dumps(sample_packet) + "\n" # sending json file
 
         try:
@@ -143,26 +160,49 @@ while True:
 
 
         if len(red_buffer) >= BUFFER_SIZE and len(ir_buffer) >= BUFFER_SIZE:
-
-            hr_result = compute_hr(ir_buffer, f_HZ)
+            
+            #Hr Calculation
+            hr_result = compute_hr(ir_buffer,f_HZ)
 
             if hr_result is None:
-                print("HR could not be computed, using last HR value.")
-                hr_rate = last_hr
+                # If there is no peak
+                print("HR could not be computed")
+                hr_count += 1
+
+                if hr_count >= 3:
+                    # It counts
+                    hr_rate = None
+                else:
+                    # last_hr can be used for couple of times (optional)
+                    hr_rate = last_hr
+
                 peaks_index = []
-            
+
             else:
                 hr_rate, peaks_index = hr_result
-                last_hr = hr_rate
+    
+                if last_hr is not None and hr_rate == last_hr:
+                    # The same HR that does not change repeatedly → suspicious
+                    hr_count += 1
+                    if hr_count >= 3:
+                        hr_rate = None
+                        peaks_index = []
+                        print("HR frozen for 3 cycles, resetting...")
+                    else:
+                        last_hr = hr_rate
+                else:
+                    # Normal state: Hr came
+                    last_hr = hr_rate
+                    hr_count = 0
 
-            
+            #SpO2 Calculation
             spo2 = compute_spo2(ir_buffer, red_buffer, raw_ir_buffer, raw_red_buffer, min_samples=40)
             if spo2 is None:
                 spo2 = last_spo2
             else:
                 last_spo2 = spo2
 
-            # --- Sıcaklık oku (hata olursa pencereyi atla) ---
+            #Temperature Sensing
             try:
                 temperature_c = temp_sensor.read_temperature_c()
                 last_temp = temperature_c
@@ -170,7 +210,7 @@ while True:
                 print("Temp sensor read error:", e)
                 temperature_c = last_temp
                 
-
+            #Second data packet for sending calculation results
             result_packet = {
                 "type": "result",
                 "acq_freq": f_HZ,
@@ -189,7 +229,7 @@ while True:
             except OSError:
                 client_socket = start_server()
                  
-
+            #Cleaning the buffers
             red_buffer = []
             ir_buffer = []
             raw_ir_buffer = []

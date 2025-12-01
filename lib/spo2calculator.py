@@ -10,7 +10,7 @@ def _mean(values):
 def _rms(values):
     """
     Root-mean-square (RMS) of values.
-    AC bileşenin büyüklüğünü temsil etmek için kullanıyoruz.
+    We use it to represent the magnitude of the AC component.
     """
     n = len(values)
     if n == 0:
@@ -40,7 +40,7 @@ def compute_spo2(ir_buffer, red_buffer, raw_ir_buffer, raw_red_buffer, min_sampl
         Estimated SpO2 value in %, or None if not enough data / invalid.
     """
 
-    # 1) Temel kontroller
+    # 1) Basic controls
     if raw_ir_buffer is None or raw_red_buffer is None:
         return None
 
@@ -50,7 +50,7 @@ def compute_spo2(ir_buffer, red_buffer, raw_ir_buffer, raw_red_buffer, min_sampl
     n_raw_red = len(raw_red_buffer)
 
     
-    # Güvenlik: iki buffer uzunluğu farklıysa küçük olanı baz al
+    # Security: if two buffer lengths are different, use the smaller one.
     n = min(n_raw_ir, n_raw_red, n_ir, n_red)
 
     if n < min_samples:
@@ -61,14 +61,14 @@ def compute_spo2(ir_buffer, red_buffer, raw_ir_buffer, raw_red_buffer, min_sampl
     ir = ir_buffer[-n:]
     red = red_buffer[-n:]
 
-    # 2) DC bileşen (ortalama)
+    # 2) DC component (average)
     dc_ir = _mean(raw_ir)
     dc_red = _mean(raw_red)
 
     if dc_ir == 0 or dc_red == 0:
         return None
 
-    # 3) AC bileşen (ortalama etrafındaki dalgalanma)
+    # 3) AC component (fluctuation around the mean)
     ac_ir = _rms(ir)
     ac_red = _rms(red)
 
@@ -80,17 +80,19 @@ def compute_spo2(ir_buffer, red_buffer, raw_ir_buffer, raw_red_buffer, min_sampl
     ratio_ir = ac_ir / dc_ir
 
     R = ratio_red / ratio_ir
-
-    # 5) Empirik polinom: SpO2 = -45.060 * R^2 + 30.354 * R + 94.845
+    CAL_k = 1.20
+    
+    # 5) Empirical polynomial: SpO2 = -45.060 * R^2 + 30.354 * R + 94.845
     spo2 = -45.060 * (R * R) + 30.354 * R + 94.845
+    spo2 = CAL_k * spo2
 
-    # 6) Limitler (0–100)
+    # 6) Limits (0–100)
     if spo2 < 0:
         spo2 = 0.0
     elif spo2 > 100:
         spo2 = 100.0
 
-    # DEBUG
+    # DEBUG (for MicroPico vREPL)
     print("DEBUG:",
       "dc_ir=", dc_ir,
       "dc_red=", dc_red,

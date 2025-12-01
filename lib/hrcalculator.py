@@ -15,31 +15,31 @@ def compute_hr(ir_buffer, acq_freq):
         Estimated heart rate in bpm, or None if not enough info.
     """
 
-    # ---- 0) Basic safety checks ----
+    # Basic safety checks 
     if acq_freq <= 0:
         return None
     if ir_buffer is None or len(ir_buffer) < 10:
-        # Too few samples to say anything meaningful
+        # Too few samples
         return None
 
-    # ---- 1) DC removal (center the signal around zero) ----
+    # DC removal (center the signal around zero) 
     n = len(ir_buffer)
     mean_val = sum(ir_buffer) / n
     centered = [x - mean_val for x in ir_buffer]
 
-    # ---- 2) Check signal amplitude (avoid noise-only windows) ----
+    # Check signal amplitude (avoid noise-only windows) 
     max_abs = max(abs(x) for x in centered)
     if max_abs < 1e-3:
-        # Almost flat signal → no pulsatile information
+        # Almost flat signal -> no pulsatile information
         return None
 
-    # ---- 3) Dynamic peak threshold ----
-    # We only accept peaks that are a certain fraction of max amplitude
-    threshold = 0.3 * max_abs  # you can tweak this (0.3–0.7)
+    # Dynamic peak threshold 
+        # We only accept peaks that are a certain fraction of max amplitude
+    threshold = 0.3 * max_abs  # (0.3–0.7)
 
-    # ---- 4) Peak detection with refractory period ----
-    # Max physiological HR ~ 200 bpm → min RR ~ 0.3 s
-    min_rr_seconds = 0.4
+    # Peak detection with refractory period
+        # Max physiological HR ~ 200 bpm → min RR ~ 0.3 s
+    min_rr_seconds = 0.3
     min_sample_between_peaks = int(acq_freq * min_rr_seconds)
     if min_sample_between_peaks < 1:
         min_sample_between_peaks = 1
@@ -68,18 +68,18 @@ def compute_hr(ir_buffer, acq_freq):
         peaks.append(i)
         last_peak_idx = i
 
-    # ---- 5) Need at least 2 peaks to compute RR intervals ----
+    # Need at least 2 peaks to compute RR intervals
     if len(peaks) < 2:
         return None
 
-    # ---- 6) Compute RR intervals (in seconds) ----
+    # Compute RR intervals (in seconds)
     rr_intervals = []
     for k in range(1, len(peaks)):
         # index difference / sampling rate = time difference in seconds
         dt_seconds = (peaks[k] - peaks[k - 1]) / acq_freq
         rr_intervals.append(dt_seconds)
 
-    # Optional: reject absurdly small/large intervals (noise / motion artifacts)
+    # Reject absurdly small/large intervals (noise / motion artifacts)
     cleaned_rr = []
     for rr in rr_intervals:
         # Accept only intervals in a plausible range, e.g. 0.3–2.0 s
@@ -89,7 +89,7 @@ def compute_hr(ir_buffer, acq_freq):
     if len(cleaned_rr) == 0:
         return None
 
-    # ---- 7) Average RR → HR in bpm ----
+    # Average RR → HR in bpm 
     cleaned_rr.sort()
     mid = len(cleaned_rr) // 2
     if len(cleaned_rr) % 2 == 1:
