@@ -64,7 +64,7 @@ f_HZ = 0 # frequency of data acquisition
 t_start = ticks_us() # starting time for acquisition 
 samples_n = 0 # number of samples received
 
-BUFFER_SIZE = 50 
+BUFFER_SIZE = 100 
 red_buffer = []
 ir_buffer = []
 raw_red_buffer = []
@@ -72,7 +72,7 @@ raw_ir_buffer = []
 
 my_SDA_pin = 26
 my_SCL_pin = 27
-my_i2c_freq = 400000
+my_i2c_freq = 100000
 
 i2c = I2C(1, sda=Pin(my_SDA_pin), scl=Pin(my_SCL_pin), freq=my_i2c_freq)
 print(i2c.scan())
@@ -81,7 +81,7 @@ sensor = MAX30102(i2c=i2c)
 # setup the sensor
 sensor.setup_sensor()
 # Set the number of samples to be averaged by the chip 
-sensor.set_fifo_average(8) # set FIFO average to 8 samples
+sensor.set_fifo_average(2) # set FIFO average to 8 samples
 # Set the ADC range
 sensor.set_adc_range(16384) # set ADC range to 16384nA
 #Set the sample rate
