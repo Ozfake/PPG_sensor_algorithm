@@ -1,8 +1,8 @@
 import network
 import time
 
-SSID = "SUPERONLINE_Wi-Fi_3252"
-PASSWORD = "3HcTsZPUXYx5"
+SSID = ""
+PASSWORD = ""
 
 wlan = network.WLAN(network.STA_IF)
 wlan.active(True)
