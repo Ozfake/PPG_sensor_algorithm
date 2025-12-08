@@ -4,102 +4,162 @@ def compute_hr(ir_buffer, acq_freq):
     """
     Compute heart rate (HR) in bpm from a filtered IR PPG buffer.
 
-    ir_buffer : list of floats/ints
+    Parameters
+    ----------
+    ir_buffer : list[float]
         Recent window of filtered IR samples (e.g. length ~50–200).
     acq_freq : float
-        Real acquisition frequency (Hz), e.g. 95.0, 100.0 etc.
+        Real acquisition frequency (Hz), e.g. 45.0, 50.0, 60.0 etc.
 
     Returns
     -------
-    hr_bpm : float or None
-        Estimated heart rate in bpm, or None if not enough info.
+    result : tuple or None
+        (hr_bpm, peaks_index) if a plausible HR could be estimated,
+        or None if the signal is not reliable enough.
     """
 
-    # Basic safety checks 
-    if acq_freq <= 0:
+    # -----------------------------
+    # Basic safety checks
+    # -----------------------------
+    if acq_freq is None or acq_freq <= 0:
         return None
-    if ir_buffer is None or len(ir_buffer) < 10:
-        # Too few samples
+    if ir_buffer is None:
         return None
 
-    # DC removal (center the signal around zero) 
     n = len(ir_buffer)
+    if n < 10:
+        # too few samples
+        return None
+
+    # -----------------------------
+    # Center signal (DC removal)
+    # -----------------------------
     mean_val = sum(ir_buffer) / n
     centered = [x - mean_val for x in ir_buffer]
 
-    # Check signal amplitude (avoid noise-only windows) 
+    # Global amplitude / quality check
+    max_c = max(centered)
+    min_c = min(centered)
+    peak_to_peak = max_c - min_c
     max_abs = max(abs(x) for x in centered)
-    if max_abs < 1e-3:
-        # Almost flat signal -> no pulsatile information
+
+    # Sinyal neredeyse düz veya çok küçük genlikliyse
+    # (parmak yok / düzgün PPG yok) → HR hesaplama.
+    AMP_MIN = 1.0  # gerekirse 1.0–3.0 arası ince ayar yapılabilir
+    if peak_to_peak < AMP_MIN or max_abs == 0.0:
         return None
 
-    # Dynamic peak threshold 
-        # We only accept peaks that are a certain fraction of max amplitude
-    threshold = 0.3 * max_abs  # (0.3–0.7)
+    # -----------------------------
+    # HR & RR design constants
+    # -----------------------------
+    # Bu projede hedeflediğimiz fizyolojik HR aralığı
+    HR_MIN_BPM = 45.0
+    HR_MAX_BPM = 140.0
 
-    # Peak detection with refractory period
-        # Max physiological HR ~ 200 bpm → min RR ~ 0.3 s
-    min_rr_seconds = 0.3
-    min_sample_between_peaks = int(acq_freq * min_rr_seconds)
-    if min_sample_between_peaks < 1:
-        min_sample_between_peaks = 1
+    # Aynı aralığa karşılık gelen RR sınırları (saniye)
+    RR_MIN = 60.0 / HR_MAX_BPM   # en kısa RR (~0.43 s)
+    RR_MAX = 60.0 / HR_MIN_BPM   # en uzun RR (~1.33 s)
 
+    # Refrakter süre: minimum RR'nin biraz altında
+    min_rr_seconds = RR_MIN * 0.8
+    min_samples_between_peaks = int(acq_freq * min_rr_seconds)
+    if min_samples_between_peaks < 1:
+        min_samples_between_peaks = 1
+
+    # -----------------------------
+    # Dynamic peak threshold
+    # -----------------------------
+    # Peak’lerin max genliğin belli bir oranının üstünde olmasını istiyoruz.
+    threshold = 0.3 * max_abs  # (0.3–0.7) ayarlanabilir
+
+    # -----------------------------
+    # Local-window "winner" ayarı
+    # -----------------------------
+    # Her aday peak için etrafında ±50 ms pencere açıp
+    # bu pencerenin en yüksek noktasını gerçek peak seçiyoruz.
+    win_samples = int(0.05 * acq_freq)  # ±50 ms
+    if win_samples < 1:
+        win_samples = 1
+
+    # -----------------------------
+    # Peak detection (local max + window winner + refractory)
+    # -----------------------------
     peaks = []
-    last_peak_idx = -min_sample_between_peaks  # allow first peak anywhere
+    last_peak_idx = -min_samples_between_peaks  # ilk peak'e serbestlik
 
-    # Simple local-maximum-based peak detection
-    # We skip first and last sample to safely look at i-1 and i+1
+    # 1..n-2 arası tarama (komşulara bakmak için)
     for i in range(1, n - 1):
         sample = centered[i]
 
-        # Above threshold?
+        # Threshold altında ise geç
         if sample < threshold:
             continue
 
-        # Local maximum?
+        # Basit lokal maksimum testi
         if not (sample >= centered[i - 1] and sample >= centered[i + 1]):
             continue
 
-        # Respect refractory period?
-        if (i - last_peak_idx) < min_sample_between_peaks:
+        # Bu noktayı aday peak kabul edip local window winner alalım
+        left = max(0, i - win_samples)
+        right = min(n - 1, i + win_samples)
+
+        # Pencere içindeki global maksimum index'i
+        local_max_idx = left
+        local_max_val = centered[left]
+        for k in range(left + 1, right + 1):
+            if centered[k] > local_max_val:
+                local_max_val = centered[k]
+                local_max_idx = k
+
+        # Refrakter süreyi seçilen gerçek peak index'ine göre kontrol et
+        if (local_max_idx - last_peak_idx) < min_samples_between_peaks:
             continue
 
-        # Accept this as a peak
-        peaks.append(i)
-        last_peak_idx = i
+        # Bu peak'i kabul et
+        peaks.append(local_max_idx)
+        last_peak_idx = local_max_idx
 
-    # Need at least 2 peaks to compute RR intervals
+    # HR hesaplamak için en az 2 peak lazım
     if len(peaks) < 2:
         return None
 
-    # Compute RR intervals (in seconds)
+    # -----------------------------
+    # RR intervals (in seconds)
+    # -----------------------------
     rr_intervals = []
     for k in range(1, len(peaks)):
-        # index difference / sampling rate = time difference in seconds
         dt_seconds = (peaks[k] - peaks[k - 1]) / acq_freq
         rr_intervals.append(dt_seconds)
 
-    # Reject absurdly small/large intervals (noise / motion artifacts)
+    # -----------------------------
+    # RR filtreleme (absürd interval'ları at)
+    # -----------------------------
     cleaned_rr = []
     for rr in rr_intervals:
-        # Accept only intervals in a plausible range, e.g. 0.3–2.0 s
-        if 0.4 <= rr <= 2.0:
+        if RR_MIN <= rr <= RR_MAX:
             cleaned_rr.append(rr)
 
     if len(cleaned_rr) == 0:
+        # Hepsi saçma aralık çıktı
         return None
 
-    # Average RR → HR in bpm 
+    # -----------------------------
+    # RR → HR (median ile sağlam tahmin)
+    # -----------------------------
     cleaned_rr.sort()
     mid = len(cleaned_rr) // 2
     if len(cleaned_rr) % 2 == 1:
         median_rr = cleaned_rr[mid]
     else:
-        median_rr = 0.5 * (cleaned_rr[mid-1] + cleaned_rr[mid])
+        median_rr = 0.5 * (cleaned_rr[mid - 1] + cleaned_rr[mid])
+
+    if median_rr <= 0:
+        return None
 
     hr_bpm = 60.0 / median_rr
 
-    if not (50.0 <= hr_bpm <= 130.0):
+    # Son güvenlik: HR hedef aralıkta mı?
+    if not (HR_MIN_BPM <= hr_bpm <= HR_MAX_BPM):
         return None
 
     return hr_bpm, peaks

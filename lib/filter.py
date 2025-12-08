@@ -5,7 +5,7 @@ class BandpassFilter:
     Simple 1st order HP + 1st order LP band-pass filter.
     """
 
-    def __init__(self, fs, fc_hp=0.5, fc_lp=8.0):
+    def __init__(self, fs, fc_hp=0.7, fc_lp=4.0):
         """
         fs     : sampling frequency (Hz) 
         fc_hp  : high-pass cut-off (Hz)   
@@ -30,20 +30,28 @@ class BandpassFilter:
         return alpha
 
     def step(self, x):
-        # 1) High-pass
-        # y_hp[n] = y_hp[n-1] + alpha_hp * (x[n] - x[n-1])
-        hp = self.hp_prev + self.hp_alpha * (x - self.x_prev)
-
-        # Update state
-        self.hp_prev = hp
+        # --- 1) PASS 1 ---
+        # High-pass
+        hp1 = self.hp_prev + self.hp_alpha * (x - self.x_prev)
+        # Update input memory
         self.x_prev = x
+        # Low-pass
+        lp1 = self.lp_prev + self.lp_alpha * (hp1 - self.lp_prev)
 
-        # 2) Low-pass
-        # y_lp[n] = y_lp[n-1] + alpha_lp * (hp[n] - y_lp[n-1])
-        lp = self.lp_prev + self.lp_alpha * (hp - self.lp_prev)
+        # Şimdi pass-1 state'lerini pass-2 için hazırlıyoruz
+        self.hp_prev = hp1
+        self.lp_prev = lp1
 
-        # Update state
-        self.lp_prev = lp
+        # --- 2) PASS 2 ---
+        # High-pass tekrar
+        hp2 = self.hp_prev + self.hp_alpha * (lp1 - self.x_prev)
+        # Burada x_prev pass-1 input'u (yani raw x), pass-2 için güncelle:
+        self.x_prev = lp1
+        # Low-pass tekrar
+        lp2 = self.lp_prev + self.lp_alpha * (hp2 - self.lp_prev)
 
-        # Result: band-pass filtered sample
-        return lp
+        # Update final states
+        self.hp_prev = hp2
+        self.lp_prev = lp2
+
+        return lp2

@@ -20,4 +20,8 @@ class MAX30205:
         if temp < -10:
             temp += 64.0
 
+        TEMP_OFFSET = 3.45 # For calibration
+
+        temp = temp + TEMP_OFFSET
+
         return temp

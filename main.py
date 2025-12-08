@@ -19,8 +19,8 @@ from lib.spo2calculator import compute_spo2, _mean
 ################
 
 #Wi-Fi connection setup
-SSID = ""
-PASSWORD = ""
+SSID = "SUPERONLINE_Wi-Fi_3252"
+PASSWORD = "3HcTsZPUXYx5"
 
 def connect_wifi():
     wlan = network.WLAN(network.STA_IF)
@@ -60,10 +60,6 @@ print("TCP client socket ready, now initializing sensors...")
 
 ################
 
-#Filters
-bp_filter_ir = BandpassFilter(fs=100, fc_hp=0.5, fc_lp=8.0)
-bp_filter_red = BandpassFilter(fs=100, fc_hp=0.5, fc_lp=8.0) 
-
 #Buffers
 BUFFER_SIZE = 100 
 red_buffer = []
@@ -76,6 +72,11 @@ compute_frequency = True # we may use it for control it by an input from user
 f_HZ = 0 # frequency of data acquisition
 t_start = ticks_us() # starting time for acquisition 
 samples_n = 0 # number of samples received
+
+#Filters
+bp_filter_ir = None # will be dynamically defined
+bp_filter_red = None
+filters_ready = False 
 
 #I2C setup
 my_SDA_pin = 26
@@ -123,38 +124,55 @@ while True:
     
     while sensor.available():
         red_sample = sensor.pop_red_from_storage()
+        ir_sample = sensor.pop_ir_from_storage()
+
+        if filters_ready:
+            red_sample_filtered = bp_filter_red.step(red_sample)
+            ir_sample_filtered  = bp_filter_ir.step(ir_sample)
+
+        else:
+            # İlk 1 saniyelik "warm-up" döneminde:
+            red_sample_filtered = red_sample  # veya 0.0, sana kalmış
+            ir_sample_filtered  = ir_sample
+        
         raw_red_buffer.append(red_sample)
-        red_sample_filtered = bp_filter_red.step(red_sample)
         red_buffer.append(red_sample_filtered)
 
-
-        ir_sample = sensor.pop_ir_from_storage()
         raw_ir_buffer.append(ir_sample)
-        ir_sample_filtered = bp_filter_ir.step(ir_sample)
         ir_buffer.append(ir_sample_filtered)
         
         # Compute the real frequency at which we receive data (with microsecond precision)
         if compute_frequency:
             if ticks_diff(ticks_us(), t_start) >= 999999:
-                f_HZ = samples_n
+                temp_f_HZ = samples_n
                 samples_n = 0
-                print("acquisition frequency = ", f_HZ)
+                print("acquisition frequency (RAW) = ", temp_f_HZ)
                 t_start = ticks_us()
+
+                if 35 <= temp_f_HZ <= 70:
+                    f_HZ = temp_f_HZ
+                    print("acquisition frequency (ACCEPTED) = ", f_HZ)
+
+                # The first moment that we see a proper f_HZ
+                if not filters_ready and f_HZ > 0:
+                    bp_filter_ir = BandpassFilter(fs=f_HZ, fc_hp=0.5, fc_lp=8.0)
+                    bp_filter_red = BandpassFilter(fs=f_HZ, fc_hp=0.5, fc_lp=8.0)
+                    filters_ready = True
+                    print("Filters initialized with fs =", f_HZ)
+
             else:
                 samples_n = samples_n + 1
 
-        #First data packet for sending each frame of data
-        sample_packet = {
-            "type": "sample",
-            "red": red_sample_filtered,
-            "ir": ir_sample_filtered,
-        }
 
-        #Data conversion
-        payload_sample = json.dumps(sample_packet) + "\n" # sending json file
+        #Sample line
+        sample_line = "S, {:.1f},{:.1f}\n".format(
+            red_sample_filtered,
+            ir_sample_filtered,
+        )
+
 
         try:
-            client_socket.send(payload_sample.encode("utf-8"))
+            client_socket.send(sample_line.encode("utf-8"))
         except OSError:
             client_socket = start_server()
 
