@@ -19,8 +19,8 @@ from lib.spo2calculator import compute_spo2, _mean
 ################
 
 #Wi-Fi connection setup
-SSID = "SUPERONLINE_Wi-Fi_3252"
-PASSWORD = "3HcTsZPUXYx5"
+SSID = ""
+PASSWORD = ""
 
 def connect_wifi():
     wlan = network.WLAN(network.STA_IF)
