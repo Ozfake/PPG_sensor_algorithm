@@ -19,8 +19,8 @@ from lib.spo2calculator import compute_spo2, _mean
 ################
 
 #Wi-Fi connection setup
-SSID = "SUPERONLINE_Wi-Fi_3252"
-PASSWORD = "3HcTsZPUXYx5"
+SSID = "RAKUN KITAPHANE"
+PASSWORD = "rakunkitaphane"
 
 def connect_wifi():
     wlan = network.WLAN(network.STA_IF)
@@ -117,6 +117,8 @@ last_temp = None #Holds last temperature
 last_hr = None #Holds last heart rate
 hr_count = 0 #Counts the number of times the peaks is not found 
 last_spo2 = None #Holds last spo2
+window_id = 0  # increments each time we send a result packet (one buffer window)
+sample_id = 0  # 
 
 
 while True:
@@ -140,6 +142,8 @@ while True:
 
         raw_ir_buffer.append(ir_sample)
         ir_buffer.append(ir_sample_filtered)
+
+        sample_id += 1
         
         # Compute the real frequency at which we receive data (with microsecond precision)
         if compute_frequency:
@@ -165,7 +169,8 @@ while True:
 
 
         #Sample line
-        sample_line = "S, {:.1f},{:.1f}\n".format(
+        sample_line = "S, {:.1f},{:.1f},{:.1f}\n".format(
+            sample_id,
             red_sample_filtered,
             ir_sample_filtered,
         )
@@ -179,6 +184,8 @@ while True:
 
         if len(red_buffer) >= BUFFER_SIZE and len(ir_buffer) >= BUFFER_SIZE:
             
+            window_id += 1
+
             #Hr Calculation
             hr_result = compute_hr(ir_buffer,f_HZ)
 
@@ -231,6 +238,9 @@ while True:
             #Second data packet for sending calculation results
             result_packet = {
                 "type": "result",
+                "window_id": window_id,
+                "window_end_sample_id": sample_id,
+                "window_start_sample_id": sample_id - BUFFER_SIZE + 1,
                 "acq_freq": f_HZ,
                 "hr": {
                     "value": hr_rate,
