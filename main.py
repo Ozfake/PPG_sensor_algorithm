@@ -20,8 +20,8 @@ from lib.spo2calculator import compute_spo2
 # CONFIGURATION
 ################################################################
 DEBUG = False 
-SSID = "SUPERONLINE_Wi-Fi_3252"
-PASSWORD = "3HcTsZPUXYx5"
+SSID = "" # Fill
+PASSWORD = ""# Fill
 
 ################################################################
 # SETUP FUNCTIONS
