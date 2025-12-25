@@ -2,56 +2,62 @@ import math
 
 class BandpassFilter:
     """
-    Simple 1st order HP + 1st order LP band-pass filter.
+    Standard 1st Order High-Pass + 1st Order Low-Pass Filter.
+    Optimized for PPG signals.
     """
 
-    def __init__(self, fs, fc_hp=0.7, fc_lp=4.0):
+    def __init__(self, fs, fc_hp=0.5, fc_lp=5.0):
         """
-        fs     : sampling frequency (Hz) 
-        fc_hp  : high-pass cut-off (Hz)   
-        fc_lp  : low-pass cut-off (Hz)    
+        fs    : Sampling frequency (Hz) - e.g., 50Hz or 100Hz
+        fc_hp : High-pass cutoff frequency (to remove DC component, e.g., 0.5Hz)
+        fc_lp : Low-pass cutoff frequency (to remove noise, e.g., 5.0Hz)
         """
         self.fs = fs
         self.dt = 1.0 / fs
 
-        # Calculate alpha coefficients for HP and LP
-        self.hp_alpha = self._calc_alpha(fc_hp)
-        self.lp_alpha = self._calc_alpha(fc_lp)
+        # --- ALPHA CALCULATIONS ---
+        
+        # 1. Low Pass Alpha (Traditional RC circuit logic)
+        # alpha_lp = dt / (RC + dt)
+        rc_lp = 1.0 / (2.0 * math.pi * fc_lp)
+        self.alpha_lp = self.dt / (rc_lp + self.dt)
 
-        # Past values (state)
-        self.x_prev = 0.0      # önceki input
-        self.hp_prev = 0.0     # önceki HP output
-        self.lp_prev = 0.0     # önceki LP output
+        # 2. High Pass Alpha (Traditional structure)
+        # alpha_hp = RC / (RC + dt)
+        rc_hp = 1.0 / (2.0 * math.pi * fc_hp)
+        self.alpha_hp = rc_hp / (rc_hp + self.dt)
 
-    def _calc_alpha(self, fc):
-        """The alpha value of the 1st order filter for the given cut-off frequency."""
-        rc = 1.0 / (2.0 * math.pi * fc)  # RC = 1 / (2πfc)
-        alpha = self.dt / (rc + self.dt)
-        return alpha
+        # --- STATE (MEMORY) VARIABLES ---
+        self.y_lp_prev = 0.0 # Previous Low-Pass output
+        self.y_hp_prev = 0.0 # Previous High-Pass output
+        self.x_prev    = 0.0 # Previous raw input (Required for High-Pass)
 
     def step(self, x):
-        # --- 1) PASS 1 ---
-        # High-pass
-        hp1 = self.hp_prev + self.hp_alpha * (x - self.x_prev)
-        # Update input memory
-        self.x_prev = x
-        # Low-pass
-        lp1 = self.lp_prev + self.lp_alpha * (hp1 - self.lp_prev)
+        """
+        Called for every new sample (x).
+        First, High-Pass is applied, then the result is passed to Low-Pass.
+        """
+        
+        # --- STEP 1: High-Pass Filter (DC Blocking) ---
+        # Formula: y[i] = alpha * (y[i-1] + x[i] - x[i-1])
+        # This process pulls the signal mean to 0 (centers the pulse wave).
+        y_hp = self.alpha_hp * (self.y_hp_prev + x - self.x_prev)
 
-        # Şimdi pass-1 state'lerini pass-2 için hazırlıyoruz
-        self.hp_prev = hp1
-        self.lp_prev = lp1
+        # --- STEP 2: Low-Pass Filter (Smoothing) ---
+        # We use the output of the High-Pass (y_hp) as input.
+        # Formula: y[i] = y[i-1] + alpha * (x[i] - y[i-1])
+        y_lp = self.y_lp_prev + self.alpha_lp * (y_hp - self.y_lp_prev)
 
-        # --- 2) PASS 2 ---
-        # High-pass tekrar
-        hp2 = self.hp_prev + self.hp_alpha * (lp1 - self.x_prev)
-        # Burada x_prev pass-1 input'u (yani raw x), pass-2 için güncelle:
-        self.x_prev = lp1
-        # Low-pass tekrar
-        lp2 = self.lp_prev + self.lp_alpha * (hp2 - self.lp_prev)
+        # --- STEP 3: Update Memory ---
+        self.x_prev    = x
+        self.y_hp_prev = y_hp
+        self.y_lp_prev = y_lp
 
-        # Update final states
-        self.hp_prev = hp2
-        self.lp_prev = lp2
+        # Return the filtered (Bandpass) data as the result
+        return y_lp
 
-        return lp2
+    def reset(self):
+        """Resets filter memory (used if necessary)"""
+        self.y_lp_prev = 0.0
+        self.y_hp_prev = 0.0
+        self.x_prev    = 0.0
